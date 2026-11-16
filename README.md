@@ -4,7 +4,7 @@
 
 ## 快速开始
 
-先打开 [示例报告](https://nodecity.ai/cases/ai-native-org-audit/example.html)，看看总分、七维图和证据是什么样。示例使用虚构团队。
+先下载 [示例报告](https://github.com/aimanatee/ai-native-org-audit/releases/download/v1.0.0/sample-report.html)，用浏览器打开，看看总分、七维图和证据是什么样。示例使用虚构团队。
 
 1. 从 [GitHub Releases](https://github.com/aimanatee/ai-native-org-audit/releases/latest) 下载 `ai-native-org-audit.zip` 并解压。
 2. Codex 项目内使用时，把整个 `ai-native-org-audit` 目录放进项目的 `.agents/skills/`，在项目中开启一个新对话。WorkBuddy 可在「技能 → 添加技能 → 上传技能」中导入 ZIP。
