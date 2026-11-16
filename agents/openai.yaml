@@ -1,0 +1,4 @@
+interface:
+  display_name: "AI-Native 组织只读审计"
+  short_description: "对组织工作方式做可复算、脱敏的只读评分并生成分享 HTML"
+  default_prompt: "使用 $ai-native-org-audit 以只读证据审计一个 AI-Native 组织，并生成分享版 HTML 报告。"

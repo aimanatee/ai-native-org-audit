@@ -1,0 +1,38 @@
+{
+  "schemaVersion": "ai-native-org-audit/v2",
+  "organization": "示例 AI 产品团队",
+  "assessmentDate": "2026-11-17",
+  "auditor": "只读自评",
+  "scope": "一个已授权的产品交付工作流；不含 CI/CD 评分",
+  "dimensions": [
+    {"id":"intent","indicators":[
+      {"id":"intent-goal","label":"目标与停止条件可读","status":"proven","evidence":[{"kind":"controlled_observation","summary":"任务记录同时包含目标、边界与停止条件","observed_on":"2026-11-17"}]},
+      {"id":"intent-priority","label":"优先级取舍能被解释","status":"established","evidence":[{"kind":"verified_artifact","summary":"决策记录保留取舍与未做事项"}]}
+    ]},
+    {"id":"spec_plan","indicators":[
+      {"id":"spec-contract","label":"规格与契约先于实现","status":"established","evidence":[{"kind":"merged_control","summary":"规格、计划与验收条件可互相追溯"}]},
+      {"id":"spec-execution","label":"计划有入口与停止点","status":"stated","evidence":[{"kind":"declared_policy","summary":"团队规则声明了任务入口与交付层级"}],"next_step":"保存一次真实任务的入口到结果回执"}
+    ]},
+    {"id":"evidence","indicators":[
+      {"id":"evidence-receipt","label":"关键结论有直接回执","status":"proven","evidence":[{"kind":"execution_receipt","summary":"验证命令和观察结果按任务保存"}]},
+      {"id":"evidence-freshness","label":"证据日期与范围清楚","status":"unknown","next_step":"为下一次评估补充每项证据的观察日期与覆盖范围"}
+    ]},
+    {"id":"review_safety","indicators":[
+      {"id":"review-boundary","label":"只读权限与副作用边界明确","status":"proven","evidence":[{"kind":"controlled_observation","summary":"审计过程未写入被审计项目"}]},
+      {"id":"review-independent","label":"有独立复核或安全检查","status":"unknown","next_step":"为高风险任务记录一次边界独立复核"}
+    ]},
+    {"id":"deterministic_learning","indicators":[
+      {"id":"verify-repeatable","label":"验证可重复运行","status":"established","evidence":[{"kind":"verified_artifact","summary":"本地确定性检查可在同一输入上复现"}]},
+      {"id":"verify-regression","label":"失败经验变成回归案例","status":"stated","evidence":[{"kind":"declared_policy","summary":"团队规则要求保留能暴露原问题的回归案例"}],"next_step":"记录一个经过真实复测的失败案例"}
+    ]},
+    {"id":"feedback_loop","indicators":[
+      {"id":"feedback-live","label":"真实运行反馈进入改进","status":"unknown","next_step":"在下一轮交付中保存一次真实使用反馈和对应改动"},
+      {"id":"feedback-close","label":"改动后能确认是否生效","status":"not_applicable","rationale":"本次范围仅评估只读审计材料，不评估生产运行闭环"}
+    ]},
+    {"id":"collaboration","indicators":[
+      {"id":"team-comms","label":"团队共享任务状态与决定","status":"established","evidence":[{"kind":"verified_artifact","summary":"任务看板记录当前负责人，规格记录确认过的决定。"}]},
+      {"id":"team-handoff","label":"交接结果有接手确认","status":"unknown","next_step":"检查一条脱敏的任务交接及接手记录。"},
+      {"id":"team-automation","label":"自动化有回执和异常处理人","status":"proven","evidence":[{"kind":"execution_receipt","summary":"抽样的本地校验运行保留结果，失败记录关联到值班角色。"}]}
+    ]}
+  ]
+}
