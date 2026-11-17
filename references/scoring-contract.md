@@ -2,6 +2,12 @@
 
 新评估使用 `ai-native-org-audit/v2`。历史 `ai-native-org-audit/v1` 输入仍可原样复算。跨期比较使用同一版本和适用范围。
 
+## 本地数据归属
+
+- 用户指定的 `audit.json` 是本次评分输入的权威副本。初始化生成 v2，`setup.teamSize` 是正整数，`setup.project` 是项目地址或本地路径。两个字段仅留在输入，用于界定取证范围。团队人数和项目地址不参与计分，也不显示在 HTML。已有输入可省略 `setup`。
+- 初始化和报告生成可离线运行。初始化仅创建指定文件，已有文件交给用户选择备份、更新或另存。Skill 不同步、不备份、不删除本地审计文件。用户负责跨设备复制、冲突处理和恢复。HTML 是可重新生成的派生文件，只有用户选择分享时才会离开本机。
+- 原始证据的权威来源仍是对应项目或业务系统。输入只保存经授权的摘要和可选证据标识。禁止放入凭据、客户原件、私聊全文或个人标识。访问授权由用户按来源确认，地址本身不授权访问。
+
 | id | 名称 | v1 | v2 |
 | --- | --- | ---: | ---: |
 | `intent` | 方向与意图 | 15 | 13 |
@@ -25,6 +31,8 @@
 `execution_receipt`、`verified_artifact`、`controlled_observation`、`merged_control`、`declared_policy`。
 
 `locator` 仅作输入核验，报告永不显示；不得放 URL、绝对路径、邮箱、凭据或个人身份。所有报告文字会再做 HTML 转义与敏感串脱敏。
+
+每个适用指标可写 `next_step`（一项具体动作）和 `success_check`（用什么结果验收）。两者按实际证据填写。只拿到制度时，可提议采一条执行回执。有落实缺口时，给出负责角色、最小改动和可复核结果。无法访问来源时，把动作写成补证，不把权限不足当作已确认缺陷。上述字段不参与计分。
 
 ## 团队协作怎么评
 
@@ -72,11 +80,12 @@ dimensionPossible = dimensionWeight
           "id": "intent-brief",
           "label": "任务有明确目标与停止条件",
           "weight": 1,
-          "status": "proven",
+          "status": "established",
           "evidence": [
-            {"kind": "controlled_observation", "summary": "可复核的目标—停止条件记录", "observed_on": "2026-11-17"}
+            {"kind": "verified_artifact", "summary": "任务模板要求明确目标及停止条件", "observed_on": "2026-11-17"}
           ],
-          "next_step": "保持每次任务都能追溯到停止条件"
+          "next_step": "项目负责人在下一张任务卡记录成功标准和停止条件。",
+          "success_check": "抽查一张已完成任务卡，能从原始目标追溯到验收结果。"
         }
       ]
     }

@@ -15,18 +15,18 @@
     ]},
     {"id":"evidence","indicators":[
       {"id":"evidence-receipt","label":"关键结论有直接回执","status":"proven","evidence":[{"kind":"execution_receipt","summary":"验证命令和观察结果按任务保存"}]},
-      {"id":"evidence-freshness","label":"证据日期与范围清楚","status":"unknown","next_step":"为下一次评估补充每项证据的观察日期与覆盖范围"}
+      {"id":"evidence-freshness","label":"证据日期与范围清楚","status":"unknown","next_step":"由交付负责人为下一张任务卡补记测试日期、版本及覆盖范围。","success_check":"另一位同事能仅凭回执找到同一版本，并确认覆盖了哪条验收条件。"}
     ]},
     {"id":"review_safety","indicators":[
       {"id":"review-boundary","label":"只读权限与副作用边界明确","status":"proven","evidence":[{"kind":"controlled_observation","summary":"审计过程未写入被审计项目"}]},
-      {"id":"review-independent","label":"有独立复核或安全检查","status":"unknown","next_step":"为高风险任务记录一次边界独立复核"}
+      {"id":"review-independent","label":"有独立复核或安全检查","status":"unknown","next_step":"由评审负责人从最近一次高风险任务取一条脱敏复核记录。","success_check":"记录能定位改动版本，并列出复核范围、发现及处置。"}
     ]},
     {"id":"deterministic_learning","indicators":[
       {"id":"verify-repeatable","label":"验证可重复运行","status":"established","evidence":[{"kind":"verified_artifact","summary":"本地确定性检查可在同一输入上复现"}]},
       {"id":"verify-regression","label":"失败经验变成回归案例","status":"stated","evidence":[{"kind":"declared_policy","summary":"团队规则要求保留能暴露原问题的回归案例"}],"next_step":"记录一个经过真实复测的失败案例"}
     ]},
     {"id":"feedback_loop","indicators":[
-      {"id":"feedback-live","label":"真实运行反馈进入改进","status":"unknown","next_step":"在下一轮交付中保存一次真实使用反馈和对应改动"},
+      {"id":"feedback-live","label":"真实运行反馈进入改进","status":"unknown","next_step":"由产品负责人把一条已授权的使用反馈关联到任务和修订。","success_check":"任务中有脱敏反馈、处理决定和用来判断修订效果的回执。"},
       {"id":"feedback-close","label":"改动后能确认是否生效","status":"not_applicable","rationale":"本次范围仅评估只读审计材料，不评估生产运行闭环"}
     ]},
     {"id":"collaboration","indicators":[

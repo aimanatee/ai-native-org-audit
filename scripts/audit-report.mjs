@@ -31,15 +31,15 @@ const V2_WEIGHTS = Object.freeze({
   intent: 13, spec_plan: 13, evidence: 21, review_safety: 13,
   deterministic_learning: 17, feedback_loop: 8, collaboration: 15,
 });
-const DIMENSIONS_V2 = Object.freeze([
+export const DIMENSIONS_V2 = Object.freeze([
   ...DIMENSIONS.map((item) => ({ ...item, weight: V2_WEIGHTS[item.id] })),
   { id: "collaboration", title: "团队协作", weight: V2_WEIGHTS.collaboration },
 ]);
-const DIMENSIONS_BY_SCHEMA = new Map([
+export const DIMENSIONS_BY_SCHEMA = new Map([
   [SCHEMA_VERSION, DIMENSIONS],
   [COLLABORATION_SCHEMA_VERSION, DIMENSIONS_V2],
 ]);
-const INDICATOR_KEYS = new Set(["id", "label", "weight", "status", "evidence", "next_step", "rationale"]);
+const INDICATOR_KEYS = new Set(["id", "label", "weight", "status", "evidence", "next_step", "success_check", "rationale"]);
 const EVIDENCE_KEYS = new Set(["kind", "summary", "locator", "observed_on"]);
 const CONTROL_PATTERN = /<\s*script\b|<\s*iframe\b|javascript\s*:|on[a-z]+\s*=/i;
 const URL_PATTERN = /(?:https?:\/\/|www\.)[^\s<>'"]+/gi;
@@ -92,6 +92,21 @@ function validateEvidence(evidence, field) {
     if (item.observed_on !== undefined) validateDate(item.observed_on, `${itemField}.observed_on`);
   }
 }
+function validateSetup(setup) {
+  if (!isObject(setup)) fail("setup must be an object");
+  for (const key of Object.keys(setup)) if (!["teamSize", "project"].includes(key)) fail(`setup.${key} is not allowed`);
+  if (!Number.isSafeInteger(setup.teamSize) || setup.teamSize <= 0) fail("setup.teamSize must be a positive integer");
+  safeText(setup.project, "setup.project");
+  const project = setup.project.trim();
+  if (!project) fail("setup.project is required");
+  const hasScheme = /^[a-z][a-z\d+.-]*:/i.test(project) && !/^[a-z]:[\\/]/i.test(project);
+  if (hasScheme) {
+    if (!/^https:\/\//i.test(project)) fail("setup.project must be a valid HTTPS address or local path");
+    let parsed;
+    try { parsed = new URL(project); } catch { fail("setup.project must be a valid HTTPS address or local path"); }
+    if (parsed.username || parsed.password || parsed.search || parsed.hash) fail("setup.project must not contain credentials or query/fragment tokens");
+  }
+}
 export function validateAudit(input) {
   if (!isObject(input)) fail("audit input must be a JSON object");
   const contractDimensions = DIMENSIONS_BY_SCHEMA.get(input.schemaVersion);
@@ -100,6 +115,7 @@ export function validateAudit(input) {
     safeText(input[field], field);
     if (!input[field].trim()) fail(`${field} is required`);
   }
+  if (input.setup !== undefined) validateSetup(input.setup);
   validateDate(input.assessmentDate, "assessmentDate");
   if (!Array.isArray(input.dimensions)) fail("dimensions must be an array");
   const seen = new Set();
@@ -127,6 +143,11 @@ export function validateAudit(input) {
         if (!indicator.evidence.length) fail(`${itemField}].evidence must contain at least one item`);
       } else if (indicator.evidence !== undefined) validateEvidence(indicator.evidence, `${itemField}].evidence`);
       if (indicator.next_step !== undefined) { safeText(indicator.next_step, `${itemField}].next_step`); if (!indicator.next_step.trim()) fail(`${itemField}].next_step cannot be empty`); }
+      if (indicator.success_check !== undefined) {
+        if (indicator.next_step === undefined) fail(`${itemField}].success_check requires next_step`);
+        safeText(indicator.success_check, `${itemField}].success_check`);
+        if (!indicator.success_check.trim()) fail(`${itemField}].success_check cannot be empty`);
+      }
     }
   }
   const missing = contractDimensions.filter(({ id }) => !seen.has(id)).map(({ id }) => id);
@@ -148,27 +169,48 @@ export function calculateAudit(input) {
   const possible = dimensions.reduce((sum, item) => sum + item.possible, 0);
   const covered = dimensions.reduce((sum, item) => sum + item.coverage.covered, 0);
   const applicable = dimensions.reduce((sum, item) => sum + item.coverage.applicable, 0);
-  return { schemaVersion: input.schemaVersion, organization: scrub(input.organization), assessmentDate: input.assessmentDate, auditor: scrub(input.auditor), scope: scrub(input.scope), dimensions, earned, possible, percent: possible ? earned / possible * 100 : 0, coverage: { covered, applicable, percent: applicable ? covered / applicable * 100 : 0 } };
+  const result = { schemaVersion: input.schemaVersion, organization: scrub(input.organization), assessmentDate: input.assessmentDate, auditor: scrub(input.auditor), scope: scrub(input.scope), dimensions, earned, possible, percent: possible ? earned / possible * 100 : 0, coverage: { covered, applicable, percent: applicable ? covered / applicable * 100 : 0 } };
+  Object.defineProperty(result, "initialAssessment", { value: input.setup !== undefined, enumerable: false });
+  return result;
 }
 function fmt(value) { return Number(value).toFixed(1); }
 function statusLabel(status) { return ({ proven: "已复核", established: "已建立", stated: "已声明", unknown: "待补证", not_applicable: "不适用" })[status] ?? status; }
 function renderAuditIndicator(indicator) {
   const evidence = (indicator.evidence ?? []).map((item) => `<li>${display(item.summary)}${item.observed_on ? `<time>${display(item.observed_on)}</time>` : ""}</li>`).join("");
   const rationale = indicator.rationale ? `<p class="rationale"><span>不适用理由</span>${display(indicator.rationale)}</p>` : "";
-  const next = indicator.next_step && ["unknown", "stated"].includes(indicator.status) ? `<p class="next-step"><span>改进机会</span>${display(indicator.next_step)}</p>` : "";
+  const next = indicator.next_step && ["unknown", "stated", "established"].includes(indicator.status) ? `<p class="next-step"><span>改进机会</span>${display(indicator.next_step)}</p>${indicator.success_check ? `<p class="success-check"><span>完成检查</span>${display(indicator.success_check)}</p>` : ""}` : "";
   return `<article class="indicator status-${indicator.status}"><div class="indicator-head"><h4>${display(indicator.label)}</h4><span class="status-chip">${statusLabel(indicator.status)}</span></div>${evidence ? `<ul class="evidence-list">${evidence}</ul>` : ""}${rationale}${next}</article>`;
+}
+
+function getRecommendations(result) {
+  const priority = { unknown: 0, stated: 1, established: 2 };
+  return result.dimensions
+    .flatMap((dimension) => dimension.indicators.map((indicator) => ({ ...indicator, dimensionTitle: dimension.title })))
+    .filter((indicator) => indicator.next_step && Object.hasOwn(priority, indicator.status))
+    .sort((a, b) => priority[a.status] - priority[b.status])
+    .slice(0, 3);
+}
+
+function isInitialUnknown(result) {
+  const applicable = result.dimensions.flatMap((dimension) => dimension.indicators).filter((indicator) => indicator.status !== "not_applicable");
+  return Boolean(result.initialAssessment && applicable.length && applicable.every((indicator) => indicator.status === "unknown"));
 }
 
 export function renderHtml(result) {
   const score = `${fmt(result.earned)} <span>/ ${fmt(result.possible)}</span>`;
   const versionLabel = display(result.schemaVersion.split("/").at(-1));
+  const initialUnknown = isInitialUnknown(result);
+  const scoreNote = initialUnknown ? `<span class="initial-assessment-label">初始评估 · 待取证</span>` : "";
   const overview = result.dimensions.map((dimension) => {
     const ratio = dimension.possible ? dimension.earned / dimension.possible * 100 : 0;
     const coverage = dimension.coverage.applicable ? `${dimension.coverage.covered}/${dimension.coverage.applicable}` : "不适用";
     return `<article class="overview-card ${dimension.excluded ? "is-excluded" : ""}"><div class="overview-head"><h3>${display(dimension.title)}</h3><strong>${dimension.excluded ? "—" : fmt(dimension.earned)} <span>/ ${fmt(dimension.possible || dimension.weight)}</span></strong></div><div class="progress-track" role="img" aria-label="${display(dimension.title)} ${fmt(ratio)}%"><i style="width:${Math.max(0, Math.min(100, ratio))}%"></i></div><div class="overview-meta"><span>${dimension.excluded ? "不适用 · 从分母移除" : `${fmt(ratio)}%`}</span><span>覆盖 ${coverage}</span></div></article>`;
   }).join("");
   const opportunities = result.dimensions.flatMap((dimension) => dimension.indicators.map((indicator) => ({ ...indicator, dimensionTitle: dimension.title }))).filter((indicator) => ["unknown", "stated"].includes(indicator.status)).sort((a, b) => Number(a.status === "stated") - Number(b.status === "stated")).slice(0, 3);
-  const opportunityHtml = opportunities.length ? opportunities.map((indicator) => `<article class="opportunity"><span class="opportunity-dimension">${display(indicator.dimensionTitle)}</span><h3>${display(indicator.label)}</h3><p>${display(indicator.next_step || "补充一条可复核的执行回执或受控观察")}</p></article>`).join("") : `<p class="empty-opportunities">当前没有待补证项；仍应按范围与日期复查证据新鲜度。</p>`;
+  const opportunityHtml = opportunities.length ? opportunities.map((indicator) => `<article class="opportunity"><span class="opportunity-dimension">${display(indicator.dimensionTitle)}</span><h3>${display(indicator.label)}</h3><p><a href="#optimization">查看文末优化建议</a></p></article>`).join("") : `<p class="empty-opportunities">当前没有待补证项；仍应按范围与日期复查证据新鲜度。</p>`;
+  const recommendations = getRecommendations(result);
+  const recommendationHtml = recommendations.length ? recommendations.map((indicator) => `<article class="optimization-card"><div class="optimization-card-head"><span class="optimization-dimension">${display(indicator.dimensionTitle)} · ${statusLabel(indicator.status)}</span></div><h3>${display(indicator.label)}</h3><p class="optimization-action"><span>具体行动</span>${display(indicator.next_step)}</p><p class="optimization-check"><span>验收检查</span>${display(indicator.success_check || "留下一条可复核的执行回执，并标注日期与范围")}</p></article>`).join("") : `<p class="empty-recommendations">当前没有可基于现有证据提出的优化建议；按范围与日期重新复核一次即可。</p>`;
+  const optimizationSection = `<section id="optimization" class="section optimization-section"><div class="section-lead"><div><p class="eyebrow">可执行改进</p><h2>接下来怎么优化</h2></div><p>每条建议都配有可观察的完成检查；待补证不等于失败。</p></div><div class="optimization-grid">${recommendationHtml}</div></section>`;
   const details = result.dimensions.map((dimension) => {
     const coverage = dimension.coverage.applicable ? `${dimension.coverage.covered}/${dimension.coverage.applicable}` : "不适用";
     const scoreLabel = dimension.excluded ? "—" : `${fmt(dimension.earned)} / ${fmt(dimension.possible)}`;
@@ -182,7 +224,7 @@ export function renderHtml(result) {
     </details>`;
   }).join("");
   return `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>${display(result.organization)} · AI-Native 只读审计</title><style>
-:root{--ink:#152840;--muted:#66768a;--line:#dce4eb;--paper:#fffdf8;--cream:#f5f1e8;--blue:#1f5f85;--cyan:#b8dfe2;--amber:#c47a28;--green:#31836f;--shadow:0 18px 55px rgba(21,40,64,.12)}*{box-sizing:border-box}html{background:#e9edf0}body{margin:0;background:var(--paper);color:var(--ink);font:16px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Noto Sans CJK SC",sans-serif}main{max-width:1120px;margin:auto;background:var(--paper)}.hero{min-height:100vh;display:grid;align-content:center;padding:clamp(32px,7vw,92px) clamp(24px,6vw,82px);background:radial-gradient(circle at 82% 18%,rgba(184,223,226,.58),transparent 34%),linear-gradient(140deg,#fffdf8 8%,#f6f8f4 100%);position:relative;overflow:hidden}.hero:after{content:"";width:360px;height:360px;border:1px solid rgba(31,95,133,.14);border-radius:50%;position:absolute;right:-130px;bottom:-150px;box-shadow:0 0 0 32px rgba(31,95,133,.04),0 0 0 64px rgba(31,95,133,.025)}.brand{display:flex;justify-content:space-between;align-items:center;letter-spacing:.06em;text-transform:uppercase;font-size:12px;color:var(--blue);font-weight:700}.hero-grid{display:grid;grid-template-columns:minmax(0,1.08fr) minmax(280px,.92fr);gap:clamp(32px,7vw,100px);align-items:center;margin-top:clamp(42px,8vw,90px)}.eyebrow{margin:0 0 10px;color:var(--blue);font-size:12px;font-weight:800;letter-spacing:.12em}.hero h1{font-size:clamp(42px,8vw,88px);line-height:1.02;letter-spacing:-.055em;margin:0 0 22px;max-width:680px}.hero p{max-width:650px;margin:0;color:var(--muted);font-size:clamp(17px,2vw,22px)}.meta{display:flex;gap:20px;flex-wrap:wrap;margin-top:30px;color:var(--muted);font-size:14px}.meta strong{color:var(--ink)}.score-card{background:rgba(255,255,255,.78);border:1px solid rgba(31,95,133,.16);border-radius:28px;padding:34px 34px 30px;box-shadow:var(--shadow);backdrop-filter:blur(10px)}.score-label{color:var(--muted);font-size:13px;font-weight:700;letter-spacing:.08em}.score{font-variant-numeric:tabular-nums;font-size:clamp(54px,8vw,94px);font-weight:800;letter-spacing:-.07em;line-height:1.05;margin:12px 0}.score span{font-size:.38em;letter-spacing:-.02em;color:var(--muted);font-weight:600}.score-meta{border-top:1px solid var(--line);padding-top:18px}.coverage{color:var(--muted);font-size:14px}.coverage strong{display:block;color:var(--green);font-size:20px}.section{padding:clamp(48px,7vw,76px) clamp(24px,6vw,82px)}.section.overview{background:var(--cream)}.section h2{font-size:clamp(30px,4vw,48px);line-height:1.1;letter-spacing:-.04em;margin:0}.section-lead{display:flex;justify-content:space-between;align-items:end;gap:24px;margin-bottom:28px}.section-lead p{color:var(--muted);margin:0}.overview-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px}.overview-card{background:var(--paper);border:1px solid var(--line);border-radius:18px;padding:20px}.overview-head{display:flex;align-items:start;justify-content:space-between;gap:12px}.overview-head h3{font-size:18px;line-height:1.25;margin:0}.overview-head strong{font-size:18px;white-space:nowrap;font-variant-numeric:tabular-nums}.overview-head strong span{font-size:12px;color:var(--muted);font-weight:500}.progress-track{height:10px;margin:20px 0 12px;border-radius:99px;background:#e2e9ee;overflow:hidden}.progress-track i{display:block;height:100%;border-radius:inherit;background:var(--blue)}.overview-card.is-excluded .progress-track i{background:#bfc8ce}.overview-meta{display:flex;justify-content:space-between;gap:8px;color:var(--muted);font-size:12px}.opportunity-wrap{background:var(--paper);border-top:1px solid var(--line);padding-top:28px;margin-top:34px}.opportunity-wrap h2{font-size:26px;margin-bottom:4px}.opportunity-wrap>p{color:var(--muted);margin:0 0 16px}.opportunities{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}.opportunity{background:#fff;border:1px solid #edd9bd;border-radius:16px;padding:16px}.opportunity-dimension{color:var(--amber);font-size:11px;font-weight:800}.opportunity h3{font-size:16px;margin:6px 0}.opportunity p{font-size:13px;color:#7d643f;margin:0}.empty-opportunities{padding:14px 0}.section.legend-section{background:var(--ink);color:#fff;padding-top:28px;padding-bottom:28px}.legend-line{display:flex;gap:12px;align-items:center;flex-wrap:wrap;font-size:13px;color:#dbe7ec}.legend-title{font-weight:800;color:#fff;margin-right:4px}.legend-pill{border:1px solid rgba(255,255,255,.2);border-radius:99px;padding:6px 10px}.section.details-section{background:#fff}.details-list{display:grid;gap:12px;margin-top:24px}.dimension-detail{border:1px solid var(--line);border-radius:18px;background:var(--paper);overflow:hidden}
+:root{--ink:#152840;--muted:#66768a;--line:#dce4eb;--paper:#fffdf8;--cream:#f5f1e8;--blue:#1f5f85;--cyan:#b8dfe2;--amber:#c47a28;--green:#31836f;--shadow:0 18px 55px rgba(21,40,64,.12)}*{box-sizing:border-box}html{background:#e9edf0}body{margin:0;background:var(--paper);color:var(--ink);font:16px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Noto Sans CJK SC",sans-serif}main{max-width:1120px;margin:auto;background:var(--paper)}.hero{min-height:100vh;display:grid;align-content:center;padding:clamp(32px,7vw,92px) clamp(24px,6vw,82px);background:radial-gradient(circle at 82% 18%,rgba(184,223,226,.58),transparent 34%),linear-gradient(140deg,#fffdf8 8%,#f6f8f4 100%);position:relative;overflow:hidden}.hero:after{content:"";width:360px;height:360px;border:1px solid rgba(31,95,133,.14);border-radius:50%;position:absolute;right:-130px;bottom:-150px;box-shadow:0 0 0 32px rgba(31,95,133,.04),0 0 0 64px rgba(31,95,133,.025)}.brand{display:flex;justify-content:space-between;align-items:center;letter-spacing:.06em;text-transform:uppercase;font-size:12px;color:var(--blue);font-weight:700}.hero-grid{display:grid;grid-template-columns:minmax(0,1.08fr) minmax(280px,.92fr);gap:clamp(32px,7vw,100px);align-items:center;margin-top:clamp(42px,8vw,90px)}.eyebrow{margin:0 0 10px;color:var(--blue);font-size:12px;font-weight:800;letter-spacing:.12em}.hero h1{font-size:clamp(42px,8vw,88px);line-height:1.02;letter-spacing:-.055em;margin:0 0 22px;max-width:680px}.hero p{max-width:650px;margin:0;color:var(--muted);font-size:clamp(17px,2vw,22px)}.meta{display:flex;gap:20px;flex-wrap:wrap;margin-top:30px;color:var(--muted);font-size:14px}.meta strong{color:var(--ink)}.score-card{background:rgba(255,255,255,.78);border:1px solid rgba(31,95,133,.16);border-radius:28px;padding:34px 34px 30px;box-shadow:var(--shadow);backdrop-filter:blur(10px)}.score-label{color:var(--muted);font-size:13px;font-weight:700;letter-spacing:.08em}.score{font-variant-numeric:tabular-nums;font-size:clamp(54px,8vw,94px);font-weight:800;letter-spacing:-.07em;line-height:1.05;margin:12px 0}.score span{font-size:.38em;letter-spacing:-.02em;color:var(--muted);font-weight:600}.score-meta{border-top:1px solid var(--line);padding-top:18px}.initial-assessment-label{display:inline-block;margin:-2px 0 18px;padding:5px 9px;border-radius:999px;background:#fff0db;color:#98601a;font-size:12px;font-weight:800;letter-spacing:.03em}.coverage{color:var(--muted);font-size:14px}.coverage strong{display:block;color:var(--green);font-size:20px}.section{padding:clamp(48px,7vw,76px) clamp(24px,6vw,82px)}.section.overview{background:var(--cream)}.section h2{font-size:clamp(30px,4vw,48px);line-height:1.1;letter-spacing:-.04em;margin:0}.section-lead{display:flex;justify-content:space-between;align-items:end;gap:24px;margin-bottom:28px}.section-lead p{color:var(--muted);margin:0}.overview-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px}.overview-card{background:var(--paper);border:1px solid var(--line);border-radius:18px;padding:20px}.overview-head{display:flex;align-items:start;justify-content:space-between;gap:12px}.overview-head h3{font-size:18px;line-height:1.25;margin:0}.overview-head strong{font-size:18px;white-space:nowrap;font-variant-numeric:tabular-nums}.overview-head strong span{font-size:12px;color:var(--muted);font-weight:500}.progress-track{height:10px;margin:20px 0 12px;border-radius:99px;background:#e2e9ee;overflow:hidden}.progress-track i{display:block;height:100%;border-radius:inherit;background:var(--blue)}.overview-card.is-excluded .progress-track i{background:#bfc8ce}.overview-meta{display:flex;justify-content:space-between;gap:8px;color:var(--muted);font-size:12px}.opportunity-wrap{background:var(--paper);border-top:1px solid var(--line);padding-top:28px;margin-top:34px}.opportunity-wrap h2{font-size:26px;margin-bottom:4px}.opportunity-wrap>p{color:var(--muted);margin:0 0 16px}.opportunities{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}.opportunity{background:#fff;border:1px solid #edd9bd;border-radius:16px;padding:16px}.opportunity-dimension{color:var(--amber);font-size:11px;font-weight:800}.opportunity h3{font-size:16px;margin:6px 0}.opportunity p{font-size:13px;color:#7d643f;margin:0}.empty-opportunities{padding:14px 0}.optimization-section{background:#f7fbfb}.optimization-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}.optimization-card{background:#fff;border:1px solid #cfe2e2;border-radius:16px;padding:18px}.optimization-card-head{display:flex;align-items:center;gap:8px;color:var(--muted);font-size:11px;font-weight:800}.optimization-index{color:var(--blue);font-variant-numeric:tabular-nums}.optimization-dimension{color:var(--blue)}.optimization-card h3{font-size:17px;line-height:1.3;margin:9px 0 14px}.optimization-action,.optimization-check{font-size:13px;margin:0;color:#405869}.optimization-check{border-top:1px dashed var(--line);margin-top:12px;padding-top:10px;color:var(--green)}.optimization-action span,.optimization-check span{display:block;font-size:10px;letter-spacing:.08em;font-weight:800;margin-bottom:2px}.optimization-action span{color:var(--amber)}.optimization-check span{color:var(--green)}.empty-recommendations{padding:14px 0}.section.legend-section{background:var(--ink);color:#fff;padding-top:28px;padding-bottom:28px}.legend-line{display:flex;gap:12px;align-items:center;flex-wrap:wrap;font-size:13px;color:#dbe7ec}.legend-title{font-weight:800;color:#fff;margin-right:4px}.legend-pill{border:1px solid rgba(255,255,255,.2);border-radius:99px;padding:6px 10px}.section.details-section{background:#fff}.details-list{display:grid;gap:12px;margin-top:24px}.dimension-detail{border:1px solid var(--line);border-radius:18px;background:var(--paper);overflow:hidden}
 .dimension-detail summary {
   display: grid; grid-template-columns: minmax(0,1fr) auto auto;
   gap: 16px; align-items: center; list-style: none; cursor: pointer;
@@ -210,8 +252,9 @@ export function renderHtml(result) {
 .detail-name { font-size: 16px; }
 .detail-meta { grid-column: 1; grid-row: 2; display: flex; flex-wrap: wrap; gap: 4px 8px; text-align: left; font-size: 13px; }
 .detail-action { grid-column: 2; grid-row: 1 / span 2; }
+.success-check{font-size:13px;color:var(--green);border-top:1px dashed var(--line);padding-top:9px;margin:13px 0 0}.success-check span{display:block;font-size:10px;text-transform:uppercase;letter-spacing:.08em;font-weight:800;color:var(--green)}
 }@media print{html,body{background:#fff}.hero{min-height:95vh}.score-card{box-shadow:none}.section{break-inside:avoid}.dimension-detail{break-inside:avoid}}
-</style></head><body><main><section class="hero"><div class="brand"><span>AI-NATIVE 组织只读审计</span><span>${versionLabel}</span></div><div class="hero-grid"><div><p class="eyebrow">分享版 · 证据分级审计</p><h1>${display(result.organization)}</h1><p>${display(result.scope)}</p><div class="meta"><span>评估日期 <strong>${display(result.assessmentDate)}</strong></span><span>审计方式 <strong>${display(result.auditor)}</strong></span></div></div><div class="score-card"><div class="score-label">总分 / 可评分满分</div><div class="score">${score}</div><div class="score-meta"><div class="coverage"><strong>${result.coverage.covered}/${result.coverage.applicable}</strong>证据覆盖率<br><small>已复核 + 已建立</small></div></div></div></div></section><section class="section overview"><div class="section-lead"><div><p class="eyebrow">能力总览</p><h2>维度总览</h2></div><p>条形长度代表该维度相对得分；覆盖率独立于分数显示。</p></div><div class="overview-grid">${overview}</div><div class="opportunity-wrap"><p class="eyebrow">下一步</p><h2>优先补证</h2><p>以下是最值得先补充的证据，不是失败认定。</p><div class="opportunities">${opportunityHtml}</div></div></section><section class="section legend-section"><div class="legend-line"><span class="legend-title">评分图例</span><span class="legend-pill">已复核 1.0 · 已建立 0.75 · 已声明 0.4</span><span class="legend-pill">待补证不等于失败</span><span class="legend-pill">不适用移出分母</span><span class="legend-pill">CI/CD 不计分</span></div></section><section class="section details-section"><div class="section-lead"><div><h2>证据与改进</h2></div></div><div class="details-list">${details}</div></section><footer class="footer">
+</style></head><body><main><section class="hero"><div class="brand"><span>AI-NATIVE 组织只读审计</span><span>${versionLabel}</span></div><div class="hero-grid"><div><p class="eyebrow">分享版 · 证据分级审计</p><h1>${display(result.organization)}</h1><p>${display(result.scope)}</p><div class="meta"><span>评估日期 <strong>${display(result.assessmentDate)}</strong></span><span>审计方式 <strong>${display(result.auditor)}</strong></span></div></div><div class="score-card"><div class="score-label">总分 / 可评分满分</div><div class="score">${score}</div>${scoreNote}<div class="score-meta"><div class="coverage"><strong>${result.coverage.covered}/${result.coverage.applicable}</strong>证据覆盖率<br><small>已复核 + 已建立</small></div></div></div></div></section><section class="section overview"><div class="section-lead"><div><p class="eyebrow">能力总览</p><h2>维度总览</h2></div><p>条形长度代表该维度相对得分；覆盖率独立于分数显示。</p></div><div class="overview-grid">${overview}</div><div class="opportunity-wrap"><p class="eyebrow">下一步</p><h2>优先补证</h2><p>以下是最值得先补充的证据，不是失败认定。</p><div class="opportunities">${opportunityHtml}</div></div></section><section class="section legend-section"><div class="legend-line"><span class="legend-title">评分图例</span><span class="legend-pill">已复核 1.0 · 已建立 0.75 · 已声明 0.4</span><span class="legend-pill">待补证不等于失败</span><span class="legend-pill">不适用移出分母</span><span class="legend-pill">CI/CD 不计分</span></div></section><section class="section details-section"><div class="section-lead"><div><h2>证据与改进</h2></div></div><div class="details-list">${details}</div></section>${optimizationSection}<footer class="footer">
   <p>评分口径 ${display(result.schemaVersion)}</p>
   <p><a href="https://github.com/aimanatee/ai-native-org-audit#快速开始">下载 Skill 与查看安装方法</a></p>
   <p>报告来源：<a href="https://nodecity.ai/">nodecity.ai</a>，为中小团队赋能的 AI 社群。</p>
